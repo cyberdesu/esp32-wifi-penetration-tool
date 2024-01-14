@@ -28,6 +28,7 @@ static const char* TAG = "main";
 esp_err_t _http_event_handle(esp_http_client_event_t *evt);
 
 void make_http_request(const char *url);
+void make_http_post_request(const char *url, const char *post_payload);
 
 void app_main(void)
 {
@@ -39,10 +40,16 @@ void app_main(void)
     attack_init();
     webserver_run();
 
-    // Make requests to different paths
-   make_http_request("http://192.168.4.1/");      // Default path
+    // Make requests to different paths    // Default path
     //make_http_request("http://192.168.4.1/ap-list");
+    make_http_request("http://192.168.4.1/status"); 
     make_http_request("http://192.168.4.1/ap-list");
+    const char *post_url = "http://192.168.4.1/run-attack"; // Sesuaikan dengan URL yang benar
+    const char *post_data = "{\"ssid\": \"ABDI FATIH HOTSPOT\",\"bssid\": \"EC:F0:FE:97:4E:88\", \"attack_type\": 1, \"attack_method\": 2, \"timeout\": 30}"; // Contoh payload, sesuaikan sesuai kebutuhan
+    make_http_post_request(post_url, post_data);
+    make_http_request("http://192.168.4.1/status");
+    make_http_request("http://192.168.4.1/status"); 
+    make_http_request("http://192.168.4.1/status");   
 }
 #define MAX_RESPONSE_SIZE 1024
 char global_response_buffer[MAX_RESPONSE_SIZE];
@@ -103,5 +110,37 @@ void make_http_request(const char *url) {
                 esp_http_client_get_content_length(client));
     }
 
+    esp_http_client_cleanup(client);
+}
+
+void make_http_post_request(const char *url, const char *post_payload) {
+    esp_http_client_config_t config = {
+        .url = url,
+        .event_handler = _http_event_handle,
+        // Menambahkan handler untuk event POST
+        .method = HTTP_METHOD_POST,  // Mengatur metode request ke POST
+        .user_data = global_response_buffer, // Buffer untuk menyimpan respons
+        .buffer_size = MAX_RESPONSE_SIZE, // Ukuran buffer respons
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // Mengatur header Content-Type untuk JSON
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+
+    // Menambahkan payload untuk request POST
+    esp_http_client_set_post_field(client, post_payload, strlen(post_payload));
+
+    // Melakukan request POST
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d",
+                 esp_http_client_get_status_code(client),
+                 esp_http_client_get_content_length(client));
+    } else {
+        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+    }
+
+    // Membersihkan client
     esp_http_client_cleanup(client);
 }

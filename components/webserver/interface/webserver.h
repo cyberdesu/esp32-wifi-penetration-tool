@@ -26,6 +26,7 @@ typedef struct {
     uint8_t type;           //< Chosen type of attack
     uint8_t method;         //< Chosen method of attack       //< Attack timeout in seconds
     char ssid[32];
+    char bssid[32];
     int attack_type;
     int attack_method;
     int timeout;

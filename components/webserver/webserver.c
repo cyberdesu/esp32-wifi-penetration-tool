@@ -191,11 +191,13 @@ static esp_err_t uri_run_attack_post_handler(httpd_req_t *req) {
     // Mendapatkan nilai dari JSON dan menetapkannya ke attack_request_t
     cJSON *ssid = cJSON_GetObjectItemCaseSensitive(root, "ssid");
     cJSON *attackType = cJSON_GetObjectItemCaseSensitive(root, "attack_type");
+    cJSON *bssid = cJSON_GetObjectItemCaseSensitive(root, "bssid");
     cJSON *attackMethod = cJSON_GetObjectItemCaseSensitive(root, "attack_method");
     cJSON *timeout = cJSON_GetObjectItemCaseSensitive(root, "timeout");
 
     // Lakukan validasi terhadap nilai-nilai JSON yang diperlukan
-    if (!cJSON_IsString(ssid) || !cJSON_IsNumber(attackType) || !cJSON_IsNumber(attackMethod) || !cJSON_IsNumber(timeout)) {
+    if (!cJSON_IsString(ssid) || !cJSON_IsString(bssid) || // Validasi BSSID sebagai string
+        !cJSON_IsNumber(attackType) || !cJSON_IsNumber(attackMethod) || !cJSON_IsNumber(timeout)) {
         cJSON_Delete(root);
         httpd_resp_send_500(req);
         return ESP_FAIL;
@@ -204,6 +206,7 @@ static esp_err_t uri_run_attack_post_handler(httpd_req_t *req) {
     // Mengisi attack_request_t dengan nilai-nilai JSON
     attack_request_t attack_request;
     strncpy(attack_request.ssid, ssid->valuestring, sizeof(attack_request.ssid) - 1);
+    strncpy(attack_request.bssid, bssid->valuestring, sizeof(attack_request.bssid) - 1); // Menyalin BSSID
     attack_request.attack_type = attackType->valueint;
     attack_request.attack_method = attackMethod->valueint;
     attack_request.timeout = timeout->valueint;
@@ -238,6 +241,8 @@ static httpd_uri_t uri_run_attack_post = {
  * @return esp_err_t
  * @{
  */
+
+
 static esp_err_t uri_status_get_handler(httpd_req_t *req) {
     ESP_LOGD(TAG, "Fetching attack status...");
     const attack_status_t *attack_status;
@@ -246,35 +251,44 @@ static esp_err_t uri_status_get_handler(httpd_req_t *req) {
     // Create a new JSON object
     cJSON *json_response = cJSON_CreateObject();
 
-    // Depending on the attack_status, set the JSON value
+    // Add information to JSON object
     if (attack_status) {
-        char *status_str = NULL;  // Convert attack_status to string as per your logic
-        // Example conversion, modify as per your requirement
+        cJSON_AddNumberToObject(json_response, "state", attack_status->state);
+        cJSON_AddNumberToObject(json_response, "content_size", attack_status->content_size);
+
+        // Add a human-readable status message
         if (attack_status->state == FINISHED || attack_status->state == TIMEOUT) {
-            status_str = (attack_status->content_size > 0) ? "Attack Finished/Timeout with content" : "Attack Finished/Timeout without content";
+            cJSON_AddStringToObject(json_response, "status_message", "Attack Finished or Timeout");
         } else {
-            status_str = "Attack In Progress/Other State";
+            cJSON_AddStringToObject(json_response, "status_message", "Attack In Progress or Other State");
         }
-        cJSON_AddStringToObject(json_response, "attack_status", status_str);
+
+        // Optionally, add other fields from attack_status if available and relevant
+    } else {
+        cJSON_AddStringToObject(json_response, "error", "No attack status available");
     }
 
-    // Serialize JSON object to string
+    // Convert JSON object to string
     char *json_string = cJSON_Print(json_response);
 
     // Set response type to JSON
-    ESP_ERROR_CHECK(httpd_resp_set_type(req, "application/json"));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json_string, strlen(json_string));
 
-    // Send the JSON response
-    ESP_ERROR_CHECK(httpd_resp_send(req, json_string, strlen(json_string)));
-
-    // Free the JSON object
+    // Free resources
     cJSON_Delete(json_response);
     free(json_string);
 
     return ESP_OK;
 }
-//@}
 
+//@}
+static httpd_uri_t uri_status_get = {
+    .uri = "/status",
+    .method = HTTP_GET,
+    .handler = uri_status_get_handler,
+    .user_ctx = NULL
+};
 /**
  * @brief Handlers for \c /capture.pcap endpoint
  *
