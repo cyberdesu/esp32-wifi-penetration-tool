@@ -243,22 +243,36 @@ static esp_err_t uri_status_get_handler(httpd_req_t *req) {
     const attack_status_t *attack_status;
     attack_status = attack_get_status();
 
-    ESP_ERROR_CHECK(httpd_resp_set_type(req, HTTPD_TYPE_OCTET));
-    // first send attack result header
-    ESP_ERROR_CHECK(httpd_resp_send_chunk(req, (char *) attack_status, 4));
-    // send attack result content
-    if(((attack_status->state == FINISHED) || (attack_status->state == TIMEOUT)) && (attack_status->content_size > 0)){
-        ESP_ERROR_CHECK(httpd_resp_send_chunk(req, attack_status->content, attack_status->content_size));
-    }
-    return httpd_resp_send_chunk(req, NULL, 0);
-}
+    // Create a new JSON object
+    cJSON *json_response = cJSON_CreateObject();
 
-static httpd_uri_t uri_status_get = {
-    .uri = "/status",
-    .method = HTTP_GET,
-    .handler = uri_status_get_handler,
-    .user_ctx = NULL
-};
+    // Depending on the attack_status, set the JSON value
+    if (attack_status) {
+        char *status_str = NULL;  // Convert attack_status to string as per your logic
+        // Example conversion, modify as per your requirement
+        if (attack_status->state == FINISHED || attack_status->state == TIMEOUT) {
+            status_str = (attack_status->content_size > 0) ? "Attack Finished/Timeout with content" : "Attack Finished/Timeout without content";
+        } else {
+            status_str = "Attack In Progress/Other State";
+        }
+        cJSON_AddStringToObject(json_response, "attack_status", status_str);
+    }
+
+    // Serialize JSON object to string
+    char *json_string = cJSON_Print(json_response);
+
+    // Set response type to JSON
+    ESP_ERROR_CHECK(httpd_resp_set_type(req, "application/json"));
+
+    // Send the JSON response
+    ESP_ERROR_CHECK(httpd_resp_send(req, json_string, strlen(json_string)));
+
+    // Free the JSON object
+    cJSON_Delete(json_response);
+    free(json_string);
+
+    return ESP_OK;
+}
 //@}
 
 /**
