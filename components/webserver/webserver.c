@@ -22,8 +22,10 @@
 #include "attack.h"
 #include "pcap_serializer.h"
 #include "hccapx_serializer.h"
-
+#include "cJSON.h"
 #include "pages/page_index.h"
+#include <esp_http_server.h>
+
 
 static const char* TAG = "webserver";
 ESP_EVENT_DEFINE_BASE(WEBSERVER_EVENTS);
@@ -82,24 +84,56 @@ static httpd_uri_t uri_reset_head = {
  * @return esp_err_t
  * @{
  */
+// ... (your existing code)
+
+/**
+ * @brief Handlers for \c /ap-list endpoint
+ *
+ * This endpoint returns list of available APs nearby in JSON format.
+ * @attention reponse may take few seconds
+ * @attention client may be disconnected from ESP AP after calling this endpoint
+ * @param req
+ * @return esp_err_t
+ * @{
+ */
 static esp_err_t uri_ap_list_get_handler(httpd_req_t *req) {
     wifictl_scan_nearby_aps();
 
     const wifictl_ap_records_t *ap_records;
     ap_records = wifictl_get_ap_records();
 
-    // 33 SSID + 6 BSSID + 1 RSSI
-    char resp_chunk[40];
+    cJSON *root = cJSON_CreateArray();
 
-    ESP_ERROR_CHECK(httpd_resp_set_type(req, HTTPD_TYPE_OCTET));
-    for(unsigned i = 0; i < ap_records->count; i++){
-        memcpy(resp_chunk, ap_records->records[i].ssid, 33);
-        memcpy(&resp_chunk[33], ap_records->records[i].bssid, 6);
-        memcpy(&resp_chunk[39], &ap_records->records[i].rssi, 1);
-        ESP_ERROR_CHECK(httpd_resp_send_chunk(req, resp_chunk, 40));
+    for (unsigned i = 0; i < ap_records->count; i++) {
+        cJSON *apObject = cJSON_CreateObject();
+
+        // Mengonversi BSSID dari format biner ke string heksadesimal
+        char bssidStr[18];
+        snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 ap_records->records[i].bssid[0], ap_records->records[i].bssid[1],
+                 ap_records->records[i].bssid[2], ap_records->records[i].bssid[3],
+                 ap_records->records[i].bssid[4], ap_records->records[i].bssid[5]);
+
+        // Menambahkan data ke objek JSON
+        cJSON_AddStringToObject(apObject, "ssid", (const char *)ap_records->records[i].ssid);
+        cJSON_AddStringToObject(apObject, "bssid", bssidStr);
+        cJSON_AddNumberToObject(apObject, "rssi", ap_records->records[i].rssi);
+
+        // Menambahkan objek AP ke array root
+        cJSON_AddItemToArray(root, apObject);
     }
-    return httpd_resp_send_chunk(req, resp_chunk, 0);
+
+    const char *jsonStr = cJSON_Print(root);
+
+    ESP_ERROR_CHECK(httpd_resp_set_type(req, HTTPD_TYPE_JSON));
+    ESP_ERROR_CHECK(httpd_resp_send(req, jsonStr, strlen(jsonStr)));
+
+    // Bebaskan memori cJSON
+    cJSON_Delete(root);
+
+    return ESP_OK;
 }
+
 
 static httpd_uri_t uri_ap_list_get = {
     .uri = "/ap-list",
@@ -107,6 +141,10 @@ static httpd_uri_t uri_ap_list_get = {
     .handler = uri_ap_list_get_handler,
     .user_ctx = NULL
 };
+//@}
+
+// ... (your existing code)
+
 //@}
 
 /**
@@ -117,13 +155,72 @@ static httpd_uri_t uri_ap_list_get = {
  * @return esp_err_t
  * @{
  */
+// Sesuaikan dengan struktur data yang diharapkan
 static esp_err_t uri_run_attack_post_handler(httpd_req_t *req) {
+    // Buffer untuk menyimpan data JSON
+    char *json_buffer = NULL;
+
+    // Mendapatkan panjang konten dari header
+    size_t content_length = req->content_len;
+
+    // Allokasi buffer dan membaca data JSON
+    json_buffer = malloc(content_length + 1); // +1 untuk null-terminator
+    if (json_buffer == NULL) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    if (httpd_req_recv(req, json_buffer, content_length) <= 0) {
+        free(json_buffer);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    // Null-terminate string JSON
+    json_buffer[content_length] = '\0';
+
+    // Parse JSON menggunakan cJSON
+    cJSON *root = cJSON_Parse(json_buffer);
+    free(json_buffer);
+
+    if (root == NULL) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    // Mendapatkan nilai dari JSON dan menetapkannya ke attack_request_t
+    cJSON *ssid = cJSON_GetObjectItemCaseSensitive(root, "ssid");
+    cJSON *attackType = cJSON_GetObjectItemCaseSensitive(root, "attack_type");
+    cJSON *attackMethod = cJSON_GetObjectItemCaseSensitive(root, "attack_method");
+    cJSON *timeout = cJSON_GetObjectItemCaseSensitive(root, "timeout");
+
+    // Lakukan validasi terhadap nilai-nilai JSON yang diperlukan
+    if (!cJSON_IsString(ssid) || !cJSON_IsNumber(attackType) || !cJSON_IsNumber(attackMethod) || !cJSON_IsNumber(timeout)) {
+        cJSON_Delete(root);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    // Mengisi attack_request_t dengan nilai-nilai JSON
     attack_request_t attack_request;
-    httpd_req_recv(req, (char *)&attack_request, sizeof(attack_request_t));
-    esp_err_t res = httpd_resp_send(req, NULL, 0);
+    strncpy(attack_request.ssid, ssid->valuestring, sizeof(attack_request.ssid) - 1);
+    attack_request.attack_type = attackType->valueint;
+    attack_request.attack_method = attackMethod->valueint;
+    attack_request.timeout = timeout->valueint;
+
+    cJSON_Delete(root);
+
+    // Kirim respons sukses ke klien
+    const char *response = "Attack request received successfully";
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, response, strlen(response));
+
+    // Kirim data ke komponen lain melalui event
     ESP_ERROR_CHECK(esp_event_post(WEBSERVER_EVENTS, WEBSERVER_EVENT_ATTACK_REQUEST, &attack_request, sizeof(attack_request_t), portMAX_DELAY));
-    return res;
+
+    return ESP_OK;
 }
+
 
 static httpd_uri_t uri_run_attack_post = {
     .uri = "/run-attack",

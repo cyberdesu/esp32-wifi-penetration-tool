@@ -1,0 +1,12 @@
+GET /api/geo/list?type=sub_district'&search=A&page=2&per_page=15* HTTP/2
+Host: trawlbens.com
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJBUEktdjIiLCJpYXQiOjE3MDI2MDM4NDMsImV4cCI6MTcwNTE5NTg0MywibmJmIjoxNzAyNjAzODQzLCJqdGkiOiJtRHgyYTJEWms3aldhcWxJIiwic3ViIjoiMTk4MjciLCJyb2xlIjoiY3VzdG9tZXIifQ.oROWn4Mly8aYBElKzQVy1NfiOpCK1Y-FhMCl-knXxBs
+Accept: application/json
+X-Tb-Platform: android
+X-Tb-App: customer
+X-Tb-Version: 2.3.8
+X-Tb-Build: 79
+Accept-Encoding: gzip, deflate, br
+User-Agent: okhttp/5.0.0-alpha.2
+
+
