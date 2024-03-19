@@ -10,6 +10,7 @@
 #include "esp_wifi_types.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include "tcpip_adapter.h"
 
 static const char* TAG = "wifi_controller";
 /**
@@ -57,6 +58,55 @@ void wifictl_ap_start(wifi_config_t *wifi_config) {
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, wifi_config));
     ESP_LOGI(TAG, "AP started with SSID=%s", wifi_config->ap.ssid);
 }
+
+void wifictl_station_start(){
+    // Konfigurasi inisialisasi WiFi
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+
+    ESP_LOGD(TAG, "Starting STATION...");
+    
+    // Inisialisasi WiFi
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    
+    // Set mode WiFi ke mode station
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    
+    // Mulai WiFi
+    ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+void print_connected_clients(const uint8_t *ap_mac) {
+    wifi_sta_list_t wifi_sta_list;
+    int total_clients = 0;
+
+
+
+    // Dapatkan alamat MAC AP
+    uint8_t ap_iface_mac[6];
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_AP, ap_iface_mac));
+
+    // Periksa apakah alamat MAC AP cocok dengan yang diberikan oleh pengguna
+    if (memcmp(ap_mac, ap_iface_mac, 6) != 0) {
+        printf("Error: MAC address of the specified AP does not match the active AP.\n");
+        return;
+    }
+
+    // Dapatkan daftar klien yang terhubung
+    ESP_ERROR_CHECK(esp_wifi_ap_get_sta_list(&wifi_sta_list));
+    
+    printf("Connected clients:\n");
+    for(int i = 0; i < wifi_sta_list.num; i++) {
+        total_clients++;
+        printf("- MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                wifi_sta_list.sta[i].mac[0], wifi_sta_list.sta[i].mac[1],
+                wifi_sta_list.sta[i].mac[2], wifi_sta_list.sta[i].mac[3],
+                wifi_sta_list.sta[i].mac[4], wifi_sta_list.sta[i].mac[5]);
+    }
+
+    // Cetak total klien yang terhubung
+    printf("Total connected clients: %d\n", total_clients);
+}
+
 
 void wifictl_ap_stop(){
     ESP_LOGD(TAG, "Stopping AP...");
