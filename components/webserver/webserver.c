@@ -25,6 +25,10 @@
 #include "cJSON.h"
 #include "pages/page_index.h"
 #include <esp_http_server.h>
+#include "esp_http_client.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lora.h"
 
 
 static const char* TAG = "webserver";
@@ -96,6 +100,32 @@ static httpd_uri_t uri_reset_head = {
  * @return esp_err_t
  * @{
  */
+static const char* get_auth_mode_string(int authmode) {
+    switch (authmode) {
+    case WIFI_AUTH_OPEN:
+        return "WIFI_AUTH_OPEN";
+    case WIFI_AUTH_WEP:
+        return "WIFI_AUTH_WEP";
+    case WIFI_AUTH_WPA_PSK:
+        return "WIFI_AUTH_WPA_PSK";
+    case WIFI_AUTH_WPA2_PSK:
+        return "WIFI_AUTH_WPA2_PSK";
+    case WIFI_AUTH_WPA_WPA2_PSK:
+        return "WIFI_AUTH_WPA_WPA2_PSK";
+    case WIFI_AUTH_ENTERPRISE:
+        return "WIFI_AUTH_ENTERPRISE";
+    case WIFI_AUTH_WPA3_PSK:
+        return "WIFI_AUTH_WPA3_PSK";
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+        return "WIFI_AUTH_WPA2_WPA3_PSK";
+    case WIFI_AUTH_WPA3_ENT_192:
+        return "WIFI_AUTH_WPA3_ENT_192";
+    default:
+        return "WIFI_AUTH_UNKNOWN";
+    }
+}
+
+
 static esp_err_t uri_ap_list_get_handler(httpd_req_t *req) {
     wifictl_scan_nearby_aps();
 
@@ -106,31 +136,60 @@ static esp_err_t uri_ap_list_get_handler(httpd_req_t *req) {
 
     for (unsigned i = 0; i < ap_records->count; i++) {
         cJSON *apObject = cJSON_CreateObject();
-
         // Mengonversi BSSID dari format biner ke string heksadesimal
         char bssidStr[18];
         snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 ap_records->records[i].bssid[0], ap_records->records[i].bssid[1],
-                 ap_records->records[i].bssid[2], ap_records->records[i].bssid[3],
-                 ap_records->records[i].bssid[4], ap_records->records[i].bssid[5]);
+                ap_records->records[i].bssid[0], ap_records->records[i].bssid[1],
+                ap_records->records[i].bssid[2], ap_records->records[i].bssid[3],
+                ap_records->records[i].bssid[4], ap_records->records[i].bssid[5]);
 
         // Menambahkan data ke objek JSON
         cJSON_AddStringToObject(apObject, "ssid", (const char *)ap_records->records[i].ssid);
         cJSON_AddStringToObject(apObject, "bssid", bssidStr);
         cJSON_AddNumberToObject(apObject, "rssi", ap_records->records[i].rssi);
+        cJSON_AddStringToObject(apObject, "auth_mode", get_auth_mode_string(ap_records->records[i].authmode));
+        
+        // Menambahkan informasi apakah jaringan WiFi adalah tersembunyi atau tidak
+        cJSON_AddBoolToObject(apObject, "hidden", (ap_records->records[i].ssid == NULL || strcmp((const char *)ap_records->records[i].ssid, "") == 0));
 
         // Menambahkan objek AP ke array root
         cJSON_AddItemToArray(root, apObject);
     }
 
-    const char *jsonStr = cJSON_Print(root);
+    // Pastikan semua objek AP telah ditambahkan
+    if (cJSON_GetArraySize(root) != ap_records->count) {
+        printf("Error: Failed to add all AP objects to the JSON array.\n");
+        cJSON_Delete(root);
+        return ESP_FAIL;
+    }
 
+    const char *jsonStr = cJSON_Print(root);
+    size_t length = strlen(jsonStr);
+    printf("Total length of the JSON string: %zu\n", length);
+    // Kirim respon HTTP dengan JSON string
     ESP_ERROR_CHECK(httpd_resp_set_type(req, HTTPD_TYPE_JSON));
     ESP_ERROR_CHECK(httpd_resp_send(req, jsonStr, strlen(jsonStr)));
+    lora_send_packet((uint8_t*)"/ap-list",9);
+    // Kirim total AP
+    char totalAPStr[20]; // Buffer untuk menyimpan string total AP
+    snprintf(totalAPStr, sizeof(totalAPStr), "{\"total\": %d}", ap_records->count); // Format string total AP
+    lora_send_packet((uint8_t*)totalAPStr, strlen(totalAPStr));
 
+    // Kirim masing-masing objek AP dengan jeda
+    cJSON *item = root->child;
+    while (item != NULL) {
+        const char *jsonObjStr = cJSON_PrintUnformatted(item); // Mengubah objek JSON ke string JSON tanpa pemformatan
+        size_t itemLength = strlen(jsonObjStr);
+        lora_send_packet((uint8_t*)jsonObjStr, itemLength);
+        printf("Packet sent...\n");
+        printf("Total length of the JSON object: %zu\n", itemLength);
+        cJSON_free((void *)jsonObjStr); // Membebaskan memori yang dialokasikan untuk string JSON
+        vTaskDelay(pdMS_TO_TICKS(100)); // Jeda 1 detik (100 ms) antara pengiriman objek AP
+        item = item->next;
+    }
+    lora_send_packet((uint8_t*)"data sudah terkirim semua",26);
     // Bebaskan memori cJSON
     cJSON_Delete(root);
-
     return ESP_OK;
 }
 
@@ -189,6 +248,7 @@ static esp_err_t uri_run_attack_post_handler(httpd_req_t *req) {
     }
 
     // Mendapatkan nilai dari JSON dan menetapkannya ke attack_request_t
+    cJSON *ap_id = cJSON_GetObjectItemCaseSensitive(root, "ap_record_id");
     cJSON *ssid = cJSON_GetObjectItemCaseSensitive(root, "ssid");
     cJSON *attackType = cJSON_GetObjectItemCaseSensitive(root, "attack_type");
     cJSON *bssid = cJSON_GetObjectItemCaseSensitive(root, "bssid");
@@ -196,7 +256,7 @@ static esp_err_t uri_run_attack_post_handler(httpd_req_t *req) {
     cJSON *timeout = cJSON_GetObjectItemCaseSensitive(root, "timeout");
 
     // Lakukan validasi terhadap nilai-nilai JSON yang diperlukan
-    if (!cJSON_IsString(ssid) || !cJSON_IsString(bssid) || // Validasi BSSID sebagai string
+    if (!cJSON_IsNumber(ap_id) || !cJSON_IsString(ssid) || !cJSON_IsString(bssid) || // Validasi BSSID sebagai string
         !cJSON_IsNumber(attackType) || !cJSON_IsNumber(attackMethod) || !cJSON_IsNumber(timeout)) {
         cJSON_Delete(root);
         httpd_resp_send_500(req);
@@ -205,8 +265,11 @@ static esp_err_t uri_run_attack_post_handler(httpd_req_t *req) {
 
     // Mengisi attack_request_t dengan nilai-nilai JSON
     attack_request_t attack_request;
+    attack_request.ap_record_id = ap_id->valueint;
     strncpy(attack_request.ssid, ssid->valuestring, sizeof(attack_request.ssid) - 1);
-    strncpy(attack_request.bssid, bssid->valuestring, sizeof(attack_request.bssid) - 1); // Menyalin BSSID
+    attack_request.ssid[sizeof(attack_request.ssid) - 1] = '\0';
+    strncpy(attack_request.bssid, bssid->valuestring, sizeof(attack_request.bssid) - 1);
+    attack_request.bssid[sizeof(attack_request.bssid) - 1] = '\0';
     attack_request.attack_type = attackType->valueint;
     attack_request.attack_method = attackMethod->valueint;
     attack_request.timeout = timeout->valueint;

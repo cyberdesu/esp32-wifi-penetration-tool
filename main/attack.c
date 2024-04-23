@@ -113,17 +113,32 @@ static void attack_timeout(void* arg){
  */
 static void attack_request_handler(void *args, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     ESP_LOGI(TAG, "Starting attack...");
+    wifictl_scan_nearby_aps();
+
+    const wifictl_ap_records_t *ap_records;
+    ap_records = wifictl_get_ap_records();
     attack_request_t *attack_request = (attack_request_t *) event_data;
-    attack_config_t attack_config = { .type = attack_request->type, .method = attack_request->method, .timeout = attack_request->timeout };
+    attack_config_t attack_config = { .type = attack_request->attack_type, .method = attack_request->attack_method, .timeout = attack_request->timeout };
     attack_config.ap_record = wifictl_get_ap_record(attack_request->ap_record_id);
     
     attack_status.state = RUNNING;
     attack_status.type = attack_config.type;
+        // Print attack configuration
+    ESP_LOGI(TAG, "Attack configuration:");
+    ESP_LOGI(TAG, "record id: %d", attack_request->ap_record_id);
+    ESP_LOGI(TAG, "Type: %d", attack_config.type);
+    ESP_LOGI(TAG, "Method: %d", attack_config.method);
+    ESP_LOGI(TAG, "Timeout: %d seconds", attack_config.timeout);
 
     if(attack_config.ap_record == NULL){
         ESP_LOGE(TAG, "NPE: No attack_config.ap_record!");
         return;
     }
+    ESP_LOGI(TAG, "AP record found: SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X", 
+        attack_config.ap_record->ssid, 
+        attack_config.ap_record->bssid[0], attack_config.ap_record->bssid[1],
+        attack_config.ap_record->bssid[2], attack_config.ap_record->bssid[3],
+        attack_config.ap_record->bssid[4], attack_config.ap_record->bssid[5]);
     // set timeout
     ESP_ERROR_CHECK(esp_timer_start_once(attack_timeout_handle, attack_config.timeout * 1000000));
     // start attack based on it's type

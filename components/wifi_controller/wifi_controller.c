@@ -10,7 +10,6 @@
 #include "esp_wifi_types.h"
 #include "esp_netif.h"
 #include "esp_event.h"
-#include "tcpip_adapter.h"
 
 static const char* TAG = "wifi_controller";
 /**
@@ -86,10 +85,10 @@ void print_connected_clients(const uint8_t *ap_mac) {
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_AP, ap_iface_mac));
 
     // Periksa apakah alamat MAC AP cocok dengan yang diberikan oleh pengguna
-    if (memcmp(ap_mac, ap_iface_mac, 6) != 0) {
+    /*if (memcmp(ap_mac, ap_iface_mac, 6) != 0) {
         printf("Error: MAC address of the specified AP does not match the active AP.\n");
         return;
-    }
+    }*/
 
     // Dapatkan daftar klien yang terhubung
     ESP_ERROR_CHECK(esp_wifi_ap_get_sta_list(&wifi_sta_list));

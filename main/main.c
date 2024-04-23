@@ -14,32 +14,112 @@
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 #include "esp_event.h"
-
+#include "nvs_flash.h"
 #include "attack.h"
 #include "wifi_controller.h"
 #include "webserver.h"
 #include "esp_http_client.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lora.h"
+#include "cJSON.h"
+
+
 
 static const char* TAG = "main";
+void make_http_request(const char *url);
+void make_http_post_request(const char *url, const char *post_payload);
 
+void task_tx(void *p)
+{
+    for(;;) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        lora_send_packet((uint8_t*)"Hello", 5);
+        printf("packet sent...\n");
+    }
+}
 
+uint8_t buf[1024];
+
+void task_rx(void *p)
+{
+    int y;
+    printf("task_rx started\n");
+    for(;;) {
+        lora_receive();    // put into receive mode
+        while(lora_received()) {
+            y = lora_receive_packet(buf, sizeof(buf));
+            printf("Received %d bytes\n", y);
+            buf[y] = 0;
+            printf("Received: %s\n", buf);
+            cJSON *root = cJSON_Parse((const char *)buf);
+            if(root == NULL) {
+                printf("Error parsing JSON\n");
+                continue;
+            }
+            else {
+                cJSON *firstElement = cJSON_GetArrayItem(root, 0);
+                if(cJSON_IsString(firstElement) && strcmp(firstElement->valuestring, "detected") == 0) {
+                    printf("Received: /detectedt\n");
+                    vTaskDelay(30000 / portTICK_PERIOD_MS);
+                    cJSON *SecondElement = cJSON_GetArrayItem(root, 1);
+                    const char *post_url = "http://192.168.4.1/run-attack"; // Sesuaikan dengan URL yang benar
+                    char *post_data = cJSON_PrintUnformatted(SecondElement); 
+                    //const char *post_data = "{\"ssid\": \"ABDI FATIH HOTSPOT\",\"bssid\": \"EC:F0:FE:97:4E:88\", \"attack_type\": 1, \"attack_method\": 2, \"timeout\": 30}"; // Contoh payload, sesuaikan sesuai kebutuhan
+                    make_http_post_request(post_url, post_data);
+                    //printf("starting attack...\n");
+                    free(post_data); 
+                    make_http_request("http://192.168.4.1/status");
+                }
+                if(cJSON_IsString(firstElement) && strcmp(firstElement->valuestring, "ap-list") == 0) {
+                    // Lakukan sesuatu jika buf sama dengan "/ap-list"
+                    printf("Received: /ap-list\n");
+                    vTaskDelay(15000 / portTICK_PERIOD_MS);
+                    make_http_request("http://192.168.4.1/ap-list");
+                }
+                cJSON_Delete(root);
+            }
+
+            lora_receive();
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 
 // Declare the HTTP event handler function
 esp_err_t _http_event_handle(esp_http_client_event_t *evt);
 
-void make_http_request(const char *url);
-void make_http_post_request(const char *url, const char *post_payload);
+
 
 void app_main(void)
 {
     ESP_LOGD(TAG, "app_main started");
+    esp_err_t nvs_ret = nvs_flash_init();
+    if (nvs_ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS Flash Init Error %d", nvs_ret);
+        return;
+    }
+    lora_init();
+    lora_set_frequency(915E6);
+    lora_enable_crc();
+    //xTaskCreate(&task_tx, "task_tx", 2048, NULL, 5, NULL);
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    
-    // Start management AP, initialize attack, and run the webserver
     wifictl_mgmt_ap_start();
     attack_init();
     webserver_run();
+    lora_set_sync_word(0xF3);
+    xTaskCreate(&task_rx, "task_rx", 4096, NULL, 5, NULL);
+    printf("app_main finished\n");
+    uint8_t ap_mac[] = {0x6C, 0xA5, 0xD1, 0xBB, 0xB8, 0xE0};
+    print_connected_clients(ap_mac);
 
+    //make_http_request("http://192.168.4.1/ap-list");
+
+    /*while(1) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        lora_send_packet((uint8_t*)"Hello", 5);
+        printf("packet sent...\n");
+    }
     // Make requests to different paths    // Default path
     //make_http_request("http://192.168.4.1/ap-list");
     make_http_request("http://192.168.4.1/status"); 
@@ -49,7 +129,7 @@ void app_main(void)
     make_http_post_request(post_url, post_data);
     make_http_request("http://192.168.4.1/status");
     make_http_request("http://192.168.4.1/status"); 
-    make_http_request("http://192.168.4.1/status");   
+    make_http_request("http://192.168.4.1/status"); */
 }
 #define MAX_RESPONSE_SIZE 1024
 char global_response_buffer[MAX_RESPONSE_SIZE];
@@ -135,8 +215,8 @@ void make_http_post_request(const char *url, const char *post_payload) {
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d",
-                 esp_http_client_get_status_code(client),
-                 esp_http_client_get_content_length(client));
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
     } else {
         ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
     }

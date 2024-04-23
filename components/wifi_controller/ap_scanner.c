@@ -29,7 +29,8 @@ void wifictl_scan_nearby_aps(){
         .ssid = NULL,
         .bssid = NULL,
         .channel = 0,
-        .scan_type = WIFI_SCAN_TYPE_ACTIVE
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .show_hidden = true
     };
     
     ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true));
@@ -47,5 +48,7 @@ const wifi_ap_record_t *wifictl_get_ap_record(unsigned index) {
         ESP_LOGE(TAG, "Index out of bounds! %u records available, but %u requested", ap_records.count, index);
         return NULL;
     }
+    ESP_LOGI(TAG, "Successfully retrieved AP record at index %u", index);
+    ESP_LOGI(TAG, "Address of AP record at index %u: %p", index, (void *)&ap_records.records[index]);
     return &ap_records.records[index];
 }
